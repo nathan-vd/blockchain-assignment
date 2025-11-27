@@ -1,0 +1,32 @@
+# Dependency directories
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.turbo/
+
+# Hardhat / Solidity artifacts
+artifacts/
+cache/
+coverage/
+coverage.json
+typechain*/
+ignition/deployments/
+
+# Environment & config overrides
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDE / OS cruft
+.DS_Store
+*.tsbuildinfo
