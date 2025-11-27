@@ -1,0 +1,27 @@
+{
+  "name": "campus-bounty-platform",
+  "version": "1.0.0",
+  "description": "Decentralized bounty platform for academic tasks - Lab project for Introduction to Blockchains, DACS, Maastricht University",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["blockchain", "ethereum", "dapp", "bounty", "education", "hardhat", "smart-contracts"],
+  "author": "Ankur Lohachab",
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "^3.0.5",
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.1",
+    "@types/node": "^22.19.1",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "hardhat": "^3.0.15",
+    "typescript": "~5.8.0",
+    "viem": "^2.40.0"
+  },
+  "dependencies": {
+    "@metamask/sdk": "^0.34.0",
+    "@safe-global/safe-apps-provider": "^0.18.6",
+    "@safe-global/safe-apps-sdk": "^9.1.0"
+  }
+}
