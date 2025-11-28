@@ -45,6 +45,9 @@ contract ConsentManager {
 
     // Reference to IdentityManager contract
     address public identityContract;
+    
+    // Trusted caller (DataSharing contract)
+    address public trustedCaller;
 
     event ConsentGranted(
         uint256 indexed consentId,
@@ -88,6 +91,7 @@ contract ConsentManager {
 
     constructor(address _identityContract) {
         identityContract = _identityContract;
+        trustedCaller = msg.sender; // DataSharing contract
     }
 
     /// @notice Request access to user data
@@ -130,9 +134,15 @@ contract ConsentManager {
         // Validate attributes
         if (attributes.length == 0) revert InvalidAttributes();
         
+        // Determine the actual owner (if called by trusted caller, use tx.origin pattern)
+        address owner = msg.sender;
+        if (msg.sender == trustedCaller) {
+            owner = tx.origin;
+        }
+        
         // Check both parties are registered
         (bool success, bytes memory data) = identityContract.staticcall(
-            abi.encodeWithSignature("isRegistered(address)", msg.sender)
+            abi.encodeWithSignature("isRegistered(address)", owner)
         );
         if (!success || !abi.decode(data, (bool))) revert UserNotRegistered();
         
@@ -146,7 +156,7 @@ contract ConsentManager {
         uint256 expiresAt = block.timestamp + (durationDays * 1 days);
 
         consents[consentId] = Consent({
-            owner: msg.sender,
+            owner: owner,
             requester: requester,
             attributes: attributes,
             issuedAt: block.timestamp,
@@ -155,11 +165,11 @@ contract ConsentManager {
         });
 
         // Track consent relationships
-        userRequesterConsents[msg.sender][requester].push(consentId);
-        userConsents[msg.sender].push(consentId);
+        userRequesterConsents[owner][requester].push(consentId);
+        userConsents[owner].push(consentId);
         requesterConsents[requester].push(consentId);
 
-        emit ConsentGranted(consentId, msg.sender, requester, attributes, expiresAt);
+        emit ConsentGranted(consentId, owner, requester, attributes, expiresAt);
 
         return consentId;
     }

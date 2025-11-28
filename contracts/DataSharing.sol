@@ -9,7 +9,7 @@ import "./AccessToken.sol";
 /// @title DataSharing
 /// @notice Manages: Permission validation, Data access coordination
 contract DataSharing {
-    IdentityManager public identityContract;
+    IdentityManager public identityManager;
     ConsentManager public consentManager;
     AuditLog public auditLog;
     AccessToken public accessToken;
@@ -69,16 +69,16 @@ contract DataSharing {
 
     constructor() {
         // Deploy all contracts
-        identityContract = new IdentityManager();
+        identityManager = new IdentityManager();
         accessToken = new AccessToken();
-        consentManager = new ConsentManager(address(identityContract));
+        consentManager = new ConsentManager(address(identityManager));
         auditLog = new AuditLog();
     }
 
     /// @notice Register as a new user
     /// @param hashedUUID Hash of user's unique identifier
     function registerUser(bytes32 hashedUUID) external {
-        identityContract.registerUser(hashedUUID);
+        identityManager.registerUser(msg.sender, hashedUUID);
     }
 
     /// @notice Request access to a user's data
@@ -90,8 +90,8 @@ contract DataSharing {
         ConsentManager.DataType[] calldata attributes
     ) external returns (uint256) {
         // Verify both parties are registered
-        if (!identityContract.isRegistered(msg.sender)) revert NotRegistered();
-        if (!identityContract.isRegistered(user)) revert NotRegistered();
+        if (!identityManager.isRegistered(msg.sender)) revert NotRegistered();
+        if (!identityManager.isRegistered(user)) revert NotRegistered();
         if (attributes.length == 0) revert InvalidRequest();
 
         uint256 requestId = requestCounter++;
@@ -160,8 +160,8 @@ contract DataSharing {
         ConsentManager.DataType[] calldata attributes,
         uint256 durationDays
     ) external returns (uint256) {
-        if (!identityContract.isRegistered(msg.sender)) revert NotRegistered();
-        if (!identityContract.isRegistered(requester)) revert NotRegistered();
+        if (!identityManager.isRegistered(msg.sender)) revert NotRegistered();
+        if (!identityManager.isRegistered(requester)) revert NotRegistered();
 
         // Grant consent via ConsentManager
         uint256 consentId = consentManager.grantConsent(
@@ -399,7 +399,7 @@ contract DataSharing {
         uint256 creditScore,
         bytes calldata signature
     ) external {
-        identityContract.updateCreditData(user, creditScore, signature);
+        identityManager.updateCreditData(user, creditScore, signature);
     }
 
     /// @notice Authorize a data submitter (Admin only)
@@ -407,12 +407,12 @@ contract DataSharing {
     /// @param authorized True to authorize, false to revoke
     function authorizeDataSubmitter(address submitter, bool authorized) external {
         // Only identity contract admin can call this
-        identityContract.setDataSubmitterAuthorization(submitter, authorized);
+        identityManager.setDataSubmitterAuthorization(submitter, authorized);
     }
 
     /// @notice Get identity contract address
-    function getIdentityContract() external view returns (address) {
-        return address(identityContract);
+    function getidentityManager() external view returns (address) {
+        return address(identityManager);
     }
 
     /// @notice Get consent manager contract address

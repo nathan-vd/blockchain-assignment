@@ -23,7 +23,7 @@ contract IdentityManagerTest is Test {
         bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
         
         vm.prank(user1);
-        identityManager.registerUser(hashedUUID);
+        identityManager.registerUser(user1, hashedUUID);
         
         assertTrue(identityManager.isRegistered(user1));
         assertEq(identityManager.totalUsers(), 1);
@@ -33,10 +33,10 @@ contract IdentityManagerTest is Test {
         bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
         
         vm.startPrank(user1);
-        identityManager.registerUser(hashedUUID);
+        identityManager.registerUser(user1, hashedUUID);
         
         vm.expectRevert(IdentityManager.AlreadyRegistered.selector);
-        identityManager.registerUser(hashedUUID);
+        identityManager.registerUser(user1, hashedUUID);
         vm.stopPrank();
     }
     
@@ -52,7 +52,7 @@ contract IdentityManagerTest is Test {
         bytes memory signature = abi.encodePacked("signature-data");
         
         vm.prank(user1);
-        identityManager.registerUser(hashedUUID);
+        identityManager.registerUser(user1, hashedUUID);
         
         identityManager.setDataSubmitterAuthorization(dataSubmitter, true);
         
@@ -66,7 +66,7 @@ contract IdentityManagerTest is Test {
         bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
         
         vm.prank(user1);
-        identityManager.registerUser(hashedUUID);
+        identityManager.registerUser(user1, hashedUUID);
         
         vm.prank(dataSubmitter);
         vm.expectRevert(IdentityManager.UnauthorizedDataSubmitter.selector);
@@ -79,7 +79,7 @@ contract IdentityManagerTest is Test {
         bytes memory signature = abi.encodePacked("sig");
         
         vm.prank(user1);
-        identityManager.registerUser(hashedUUID);
+        identityManager.registerUser(user1, hashedUUID);
         
         identityManager.setDataSubmitterAuthorization(dataSubmitter, true);
         
@@ -100,7 +100,7 @@ contract IdentityManagerTest is Test {
         bytes32 wrongHash = keccak256(abi.encodePacked("wrong-uuid"));
         
         vm.prank(user1);
-        identityManager.registerUser(correctHash);
+        identityManager.registerUser(user1, correctHash);
         
         assertTrue(identityManager.verifyUserData(user1, correctHash));
         assertFalse(identityManager.verifyUserData(user1, wrongHash));
@@ -110,7 +110,7 @@ contract IdentityManagerTest is Test {
         bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
         
         vm.prank(user1);
-        identityManager.registerUser(hashedUUID);
+        identityManager.registerUser(user1, hashedUUID);
         
         identityManager.setDataSubmitterAuthorization(dataSubmitter, true);
         
@@ -146,7 +146,7 @@ contract IdentityManagerTest is Test {
     
     function testFuzz_RegisterUser(bytes32 hashedUUID) public {
         vm.prank(user1);
-        identityManager.registerUser(hashedUUID);
+        identityManager.registerUser(user1, hashedUUID);
         
         assertTrue(identityManager.isRegistered(user1));
     }

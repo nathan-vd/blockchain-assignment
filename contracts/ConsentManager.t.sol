@@ -23,13 +23,13 @@ contract ConsentManagerTest is Test {
         
         // Register users
         vm.prank(user1);
-        identityManager.registerUser(keccak256("user1"));
+        identityManager.registerUser(user1, keccak256("user1"));
         
         vm.prank(user2);
-        identityManager.registerUser(keccak256("user2"));
+        identityManager.registerUser(user2, keccak256("user2"));
         
         vm.prank(requester);
-        identityManager.registerUser(keccak256("requester"));
+        identityManager.registerUser(requester, keccak256("requester"));
     }
     
     function test_RequestAccess() public {

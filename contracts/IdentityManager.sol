@@ -64,10 +64,10 @@ contract IdentityManager {
 
     /// @notice Register a new user with hashed UUID
     /// @param hashedUUID Hash of user's unique identifier
-    function registerUser(bytes32 hashedUUID) external {
-        if (isRegistered[msg.sender]) revert AlreadyRegistered();
+    function registerUser(address user, bytes32 hashedUUID) external {
+        if (isRegistered[user]) revert AlreadyRegistered();
 
-        identities[msg.sender] = Identity({
+        identities[user] = Identity({
             hashedUUID: hashedUUID,
             creditScore: 0,
             verificationTimestamp: 0,
@@ -76,10 +76,10 @@ contract IdentityManager {
             exists: true
         });
 
-        isRegistered[msg.sender] = true;
+        isRegistered[user] = true;
         totalUsers++;
 
-        emit UserRegistered(msg.sender, hashedUUID, block.timestamp);
+        emit UserRegistered(user, hashedUUID, block.timestamp);
     }
 
     /// @notice Update credit data for a user (Data Submitter only)
@@ -190,8 +190,10 @@ contract IdentityManager {
     /// @param authorized True to authorize, false to revoke
     function setDataSubmitterAuthorization(address submitter, bool authorized) 
         external 
-        onlyAdmin 
     {
+        // Allow both admin and the admin contract (DataSharing) to authorize
+        if (msg.sender != admin) revert Unauthorized();
+        
         authorizedDataSubmitters[submitter] = authorized;
         emit DataSubmitterAuthorized(submitter, authorized);
     }
