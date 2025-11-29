@@ -2,206 +2,101 @@
 pragma solidity ^0.8.30;
 
 /// @title IdentityManager
-/// @notice Stores: User address, UUID hash, Credit score, Data submitter signature
+/// @notice Stores hashed identities and verified credit information
 contract IdentityManager {
     struct Identity {
         bytes32 hashedUUID;
         uint256 creditScore;
         uint256 verificationTimestamp;
         address dataSubmitter;
-        bytes dataSubmitterSignature;
+        bytes submitterSignature;
         bool exists;
     }
 
-    // Mapping from user address to their identity
     mapping(address => Identity) private identities;
-    
-    // Mapping to track registered users
-    mapping(address => bool) public isRegistered;
-    
-    // Mapping to track authorized data submitters (trusted oracles)
-    mapping(address => bool) public authorizedDataSubmitters;
-    
+    mapping(address => bool) public authorizedSubmitters;
+
     address public admin;
     uint256 public totalUsers;
 
-    event UserRegistered(
-        address indexed user,
-        bytes32 hashedUUID,
-        uint256 timestamp
-    );
-    
-    event CreditVerified(
-        address indexed user,
-        address indexed dataSubmitter,
-        uint256 creditScore,
-        uint256 timestamp,
-        bytes signature
-    );
-    
-    event DataSubmitterAuthorized(address indexed submitter, bool authorized);
-
-    error AlreadyRegistered();
-    error NotRegistered();
-    error UnauthorizedDataSubmitter();
-    error InvalidCreditScore();
-    error InvalidSignature();
-    error Unauthorized();
+    event UserRegistered(address indexed user, bytes32 hashedUUID, uint256 timestamp);
+    event CreditVerified(address indexed user, address indexed submitter, uint256 creditScore, uint256 timestamp);
+    event SubmitterUpdated(address indexed submitter, bool authorized);
 
     modifier onlyAdmin() {
-        if (msg.sender != admin) revert Unauthorized();
+        require(msg.sender == admin, "Not identity admin");
         _;
     }
 
-    modifier onlyRegistered() {
-        if (!isRegistered[msg.sender]) revert NotRegistered();
-        _;
+    constructor(address adminAddress) {
+        require(adminAddress != address(0), "Admin required");
+        admin = adminAddress;
     }
 
-    constructor() {
-        admin = msg.sender;
-    }
-
-    /// @notice Register a new user with hashed UUID
-    /// @param hashedUUID Hash of user's unique identifier
-    function registerUser(address user, bytes32 hashedUUID) external {
-        if (isRegistered[user]) revert AlreadyRegistered();
+    /// @notice Register a new user
+    function register(address user, bytes32 hashedUUID) external onlyAdmin {
+        require(user != address(0), "Invalid user");
+        require(!identities[user].exists, "Already registered");
 
         identities[user] = Identity({
             hashedUUID: hashedUUID,
             creditScore: 0,
             verificationTimestamp: 0,
             dataSubmitter: address(0),
-            dataSubmitterSignature: "",
+            submitterSignature: "",
             exists: true
         });
 
-        isRegistered[user] = true;
-        totalUsers++;
+        totalUsers += 1;
 
         emit UserRegistered(user, hashedUUID, block.timestamp);
     }
 
-    /// @notice Update credit data for a user (Data Submitter only)
-    /// @param user User address whose credit is being verified
-    /// @param creditScore Credit score (300-850 typical range)
-    /// @param signature Cryptographic signature attesting to verification
+    /// @notice Authorize a trusted financial data submitter
+    function setDataSubmitter(address submitter, bool authorized) external onlyAdmin {
+        require(submitter != address(0), "Invalid submitter");
+        authorizedSubmitters[submitter] = authorized;
+        emit SubmitterUpdated(submitter, authorized);
+    }
+
+    /// @notice Platform records credit data after verifying submitter authorization
     function updateCreditData(
         address user,
         uint256 creditScore,
-        bytes calldata signature
-    ) external {
-        if (!authorizedDataSubmitters[msg.sender]) revert UnauthorizedDataSubmitter();
-        if (!isRegistered[user]) revert NotRegistered();
-        if (creditScore < 300 || creditScore > 850) revert InvalidCreditScore();
-        if (signature.length == 0) revert InvalidSignature();
+        bytes calldata signature,
+        address submitter
+    ) external onlyAdmin {
+        require(submitter != address(0), "Invalid submitter");
+        require(authorizedSubmitters[submitter], "Not data submitter");
+        require(identities[user].exists, "User not registered");
+        require(creditScore >= 300 && creditScore <= 850, "Invalid credit score");
+        require(signature.length > 0, "Signature required");
 
         Identity storage identity = identities[user];
         identity.creditScore = creditScore;
         identity.verificationTimestamp = block.timestamp;
-        identity.dataSubmitter = msg.sender;
-        identity.dataSubmitterSignature = signature;
+        identity.dataSubmitter = submitter;
+        identity.submitterSignature = signature;
 
-        emit CreditVerified(
-            user,
-            msg.sender,
-            creditScore,
-            block.timestamp,
-            signature
-        );
+        emit CreditVerified(user, submitter, creditScore, block.timestamp);
     }
 
-    /// @notice Get user information
-    /// @param user User address to query
-    /// @return hashedUUID The hashed UUID
-    /// @return creditScore The credit score
-    /// @return verificationTimestamp When verification occurred
-    /// @return dataSubmitter Address of the data submitter
-    function getUserInfo(address user) 
-        external 
-        view 
-        returns (
-            bytes32 hashedUUID,
-            uint256 creditScore,
-            uint256 verificationTimestamp,
-            address dataSubmitter
-        ) 
-    {
-        if (!isRegistered[user]) revert NotRegistered();
-        Identity memory identity = identities[user];
-        return (
-            identity.hashedUUID,
-            identity.creditScore,
-            identity.verificationTimestamp,
-            identity.dataSubmitter
-        );
-    }
-
-    /// @notice Get identity information for a user
-    /// @param user User address to query
-    /// @return identity The user's identity struct
+    /// @notice Fetch stored identity information
     function getIdentity(address user) external view returns (Identity memory) {
-        if (!isRegistered[user]) revert NotRegistered();
+        require(identities[user].exists, "User not registered");
         return identities[user];
     }
 
-    /// @notice Get credit score for a user
-    /// @param user User address to query
-    /// @return creditScore The user's credit score
-    function getCreditScore(address user) external view returns (uint256) {
-        if (!isRegistered[user]) revert NotRegistered();
-        return identities[user].creditScore;
+    /// @notice Check if an address is registered
+    function isRegistered(address user) external view returns (bool) {
+        return identities[user].exists;
     }
 
-    /// @notice Get verification details for a user
-    /// @param user User address to query
-    /// @return timestamp When verification occurred
-    /// @return submitter Address of the data submitter
-    function getVerificationDetails(address user) 
-        external 
-        view 
-        returns (uint256 timestamp, address submitter) 
-    {
-        if (!isRegistered[user]) revert NotRegistered();
-        Identity memory identity = identities[user];
-        return (identity.verificationTimestamp, identity.dataSubmitter);
-    }
-
-    /// @notice Verify if UUID hash matches registered hash
-    /// @param user User address to verify
-    /// @param hashedUUID Hash to check against
-    /// @return matches True if hashes match
-    function verifyUserData(address user, bytes32 hashedUUID) external view returns (bool) {
-        if (!isRegistered[user]) return false;
-        return identities[user].hashedUUID == hashedUUID;
-    }
-
-    /// @notice Verify if UUID hash matches registered hash (alias for compatibility)
-    /// @param user User address to verify
-    /// @param hashedUUID Hash to check against
-    /// @return matches True if hashes match
+    /// @notice Verify hashed UUID matches stored value
     function verifyUUID(address user, bytes32 hashedUUID) external view returns (bool) {
-        if (!isRegistered[user]) return false;
+        if (!identities[user].exists) {
+            return false;
+        }
         return identities[user].hashedUUID == hashedUUID;
-    }
-
-    /// @notice Authorize or deauthorize a data submitter
-    /// @param submitter Address to authorize/deauthorize
-    /// @param authorized True to authorize, false to revoke
-    function setDataSubmitterAuthorization(address submitter, bool authorized) 
-        external 
-    {
-        // Allow both admin and the admin contract (DataSharing) to authorize
-        if (msg.sender != admin) revert Unauthorized();
-        
-        authorizedDataSubmitters[submitter] = authorized;
-        emit DataSubmitterAuthorized(submitter, authorized);
-    }
-
-    /// @notice Transfer admin rights
-    /// @param newAdmin New admin address
-    function transferAdmin(address newAdmin) external onlyAdmin {
-        if (newAdmin == address(0)) revert Unauthorized();
-        admin = newAdmin;
     }
 }

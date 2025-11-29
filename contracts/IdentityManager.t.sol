@@ -1,153 +1,74 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {IdentityManager} from "./IdentityManager.sol";
 import {Test} from "forge-std/Test.sol";
+import {IdentityManager} from "./IdentityManager.sol";
 
 contract IdentityManagerTest is Test {
-    IdentityManager public identityManager;
-    address public admin;
-    address public user1;
-    address public user2;
-    address public dataSubmitter;
-    
+    IdentityManager private manager;
+    address private admin = address(this);
+    address private alice = address(0x1);
+    address private bob = address(0x2);
+    address private submitter = address(0x3);
+
     function setUp() public {
-        admin = address(this);
-        user1 = address(0x1);
-        user2 = address(0x2);
-        dataSubmitter = address(0x3);
-        identityManager = new IdentityManager();
+        manager = new IdentityManager(admin);
     }
-    
-    function test_RegisterUser() public {
-        bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
-        
-        vm.prank(user1);
-        identityManager.registerUser(user1, hashedUUID);
-        
-        assertTrue(identityManager.isRegistered(user1));
-        assertEq(identityManager.totalUsers(), 1);
+
+    function testRegisterStoresIdentity() public {
+        bytes32 uuid = keccak256(abi.encodePacked("alice"));
+        manager.register(alice, uuid);
+
+        IdentityManager.Identity memory identity = manager.getIdentity(alice);
+        assertEq(identity.hashedUUID, uuid, "UUID mismatch");
+        assertTrue(identity.exists, "Identity missing");
+        assertEq(manager.totalUsers(), 1, "Total users incorrect");
     }
-    
-    function test_DuplicateRegistration() public {
-        bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
-        
-        vm.startPrank(user1);
-        identityManager.registerUser(user1, hashedUUID);
-        
-        vm.expectRevert(IdentityManager.AlreadyRegistered.selector);
-        identityManager.registerUser(user1, hashedUUID);
-        vm.stopPrank();
+
+    function testDuplicateRegistrationReverts() public {
+        bytes32 uuid = keccak256("dup");
+        manager.register(alice, uuid);
+
+        vm.expectRevert("Already registered");
+        manager.register(alice, uuid);
     }
-    
-    function test_AuthorizeDataSubmitter() public {
-        identityManager.setDataSubmitterAuthorization(dataSubmitter, true);
-        
-        assertTrue(identityManager.authorizedDataSubmitters(dataSubmitter));
+
+    function testOnlyAdminRegisters() public {
+        vm.prank(bob);
+        vm.expectRevert("Not identity admin");
+        manager.register(bob, keccak256("bob"));
     }
-    
-    function test_UpdateCreditData() public {
-        bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
-        uint256 creditScore = 750;
-        bytes memory signature = abi.encodePacked("signature-data");
-        
-        vm.prank(user1);
-        identityManager.registerUser(user1, hashedUUID);
-        
-        identityManager.setDataSubmitterAuthorization(dataSubmitter, true);
-        
-        vm.prank(dataSubmitter);
-        identityManager.updateCreditData(user1, creditScore, signature);
-        
-        assertEq(identityManager.getCreditScore(user1), creditScore);
-    }
-    
-    function test_UnauthorizedCreditUpdate() public {
-        bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
-        
-        vm.prank(user1);
-        identityManager.registerUser(user1, hashedUUID);
-        
-        vm.prank(dataSubmitter);
-        vm.expectRevert(IdentityManager.UnauthorizedDataSubmitter.selector);
-        identityManager.updateCreditData(user1, 700, "sig");
-    }
-    
-    function test_GetUserInfo() public {
-        bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
-        uint256 creditScore = 800;
+
+    function testAuthorizeSubmitterAndUpdateCredit() public {
+        bytes32 uuid = keccak256("alice");
+        manager.register(alice, uuid);
+
+        manager.setDataSubmitter(submitter, true);
+        assertTrue(manager.authorizedSubmitters(submitter), "Submitter authorization missing");
+
         bytes memory signature = abi.encodePacked("sig");
-        
-        vm.prank(user1);
-        identityManager.registerUser(user1, hashedUUID);
-        
-        identityManager.setDataSubmitterAuthorization(dataSubmitter, true);
-        
-        vm.prank(dataSubmitter);
-        identityManager.updateCreditData(user1, creditScore, signature);
-        
-        (bytes32 uuid, uint256 score, uint256 timestamp, address submitter) = 
-            identityManager.getUserInfo(user1);
-        
-        assertEq(uuid, hashedUUID);
-        assertEq(score, creditScore);
-        assertEq(submitter, dataSubmitter);
-        assertTrue(timestamp > 0);
+        manager.updateCreditData(alice, 720, signature, submitter);
+
+        IdentityManager.Identity memory identity = manager.getIdentity(alice);
+        assertEq(identity.creditScore, 720, "Credit score mismatch");
+        assertEq(identity.dataSubmitter, submitter, "Submitter mismatch");
+        assertTrue(identity.verificationTimestamp > 0, "Timestamp missing");
     }
-    
-    function test_VerifyUserData() public {
-        bytes32 correctHash = keccak256(abi.encodePacked("user1-uuid"));
-        bytes32 wrongHash = keccak256(abi.encodePacked("wrong-uuid"));
-        
-        vm.prank(user1);
-        identityManager.registerUser(user1, correctHash);
-        
-        assertTrue(identityManager.verifyUserData(user1, correctHash));
-        assertFalse(identityManager.verifyUserData(user1, wrongHash));
+
+    function testUnauthorizedCreditUpdateReverts() public {
+        bytes32 uuid = keccak256("alice");
+        manager.register(alice, uuid);
+
+        bytes memory signature = abi.encodePacked("sig");
+        vm.expectRevert("Not data submitter");
+        manager.updateCreditData(alice, 650, signature, submitter);
     }
-    
-    function test_InvalidCreditScore() public {
-        bytes32 hashedUUID = keccak256(abi.encodePacked("user1-uuid"));
-        
-        vm.prank(user1);
-        identityManager.registerUser(user1, hashedUUID);
-        
-        identityManager.setDataSubmitterAuthorization(dataSubmitter, true);
-        
-        vm.startPrank(dataSubmitter);
-        vm.expectRevert(IdentityManager.InvalidCreditScore.selector);
-        identityManager.updateCreditData(user1, 200, "sig");
-        
-        vm.expectRevert(IdentityManager.InvalidCreditScore.selector);
-        identityManager.updateCreditData(user1, 900, "sig");
-        vm.stopPrank();
-    }
-    
-    function test_TransferAdmin() public {
-        address newAdmin = address(0x999);
-        identityManager.transferAdmin(newAdmin);
-        
-        assertEq(identityManager.admin(), newAdmin);
-    }
-    
-    function test_UnauthorizedAdminTransfer() public {
-        vm.prank(user1);
-        vm.expectRevert(IdentityManager.Unauthorized.selector);
-        identityManager.transferAdmin(user2);
-    }
-    
-    function test_NotRegisteredQueries() public {
-        vm.expectRevert(IdentityManager.NotRegistered.selector);
-        identityManager.getCreditScore(user1);
-        
-        vm.expectRevert(IdentityManager.NotRegistered.selector);
-        identityManager.getUserInfo(user1);
-    }
-    
-    function testFuzz_RegisterUser(bytes32 hashedUUID) public {
-        vm.prank(user1);
-        identityManager.registerUser(user1, hashedUUID);
-        
-        assertTrue(identityManager.isRegistered(user1));
+
+    function testVerifyUUID() public {
+        bytes32 uuid = keccak256("alice");
+        manager.register(alice, uuid);
+
+        assertTrue(manager.verifyUUID(alice, uuid), "Hash should match");
+        assertFalse(manager.verifyUUID(alice, keccak256("other")), "Wrong hash should fail");
     }
 }

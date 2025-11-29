@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 /// @title AccessToken
-/// @notice ERC-20 Token: N tokens per consent
+/// @notice Simple ERC-20 token used to reward consent grants
 contract AccessToken {
     string public constant name = "Access Credit";
     string public constant symbol = "ACC";
@@ -16,30 +16,23 @@ contract AccessToken {
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed holder, address indexed spender, uint256 value);
-    event Minted(address indexed to, uint256 amount);
-
-    error Unauthorized();
-    error InsufficientBalance();
-    error InsufficientAllowance();
-    error InvalidAddress();
-    error InvalidAmount();
+    event Mint(address indexed to, uint256 amount);
+    event OwnerUpdated(address indexed newOwner);
 
     modifier onlyOwner() {
-        if (msg.sender != owner) revert Unauthorized();
+        require(msg.sender == owner, "Not token owner");
         _;
     }
 
-    constructor() {
-        owner = msg.sender;
+    constructor(address initialOwner) {
+        require(initialOwner != address(0), "Owner required");
+        owner = initialOwner;
     }
 
     /// @notice Transfer tokens to another address
-    /// @param to Recipient address
-    /// @param amount Amount to transfer
-    /// @return success True if transfer succeeded
     function transfer(address to, uint256 amount) external returns (bool) {
-        if (to == address(0)) revert InvalidAddress();
-        if (balanceOf[msg.sender] < amount) revert InsufficientBalance();
+        require(to != address(0), "Transfer to zero");
+        require(balanceOf[msg.sender] >= amount, "Balance too low");
 
         balanceOf[msg.sender] -= amount;
         balanceOf[to] += amount;
@@ -48,12 +41,9 @@ contract AccessToken {
         return true;
     }
 
-    /// @notice Approve spender to transfer tokens on behalf of holder
-    /// @param spender Address authorized to spend
-    /// @param amount Maximum amount authorized
-    /// @return success True if approval succeeded
+    /// @notice Approve a spender to transfer tokens
     function approve(address spender, uint256 amount) external returns (bool) {
-        if (spender == address(0)) revert InvalidAddress();
+        require(spender != address(0), "Approve to zero");
 
         allowance[msg.sender][spender] = amount;
 
@@ -61,15 +51,11 @@ contract AccessToken {
         return true;
     }
 
-    /// @notice Transfer tokens from one address to another using allowance
-    /// @param from Source address
-    /// @param to Destination address
-    /// @param amount Amount to transfer
-    /// @return success True if transfer succeeded
+    /// @notice Transfer tokens using an allowance
     function transferFrom(address from, address to, uint256 amount) external returns (bool) {
-        if (to == address(0)) revert InvalidAddress();
-        if (balanceOf[from] < amount) revert InsufficientBalance();
-        if (allowance[from][msg.sender] < amount) revert InsufficientAllowance();
+        require(to != address(0), "Transfer to zero");
+        require(balanceOf[from] >= amount, "Balance too low");
+        require(allowance[from][msg.sender] >= amount, "Allowance too low");
 
         allowance[from][msg.sender] -= amount;
         balanceOf[from] -= amount;
@@ -79,38 +65,22 @@ contract AccessToken {
         return true;
     }
 
-    /// @notice Mint new tokens (only callable by owner/platform)
-    /// @param to Recipient address
-    /// @param amount Amount to mint
+    /// @notice Mint new tokens (platform controlled)
     function mint(address to, uint256 amount) external onlyOwner {
-        if (to == address(0)) revert InvalidAddress();
-        if (amount == 0) revert InvalidAmount();
+        require(to != address(0), "Mint to zero");
+        require(amount > 0, "Mint zero");
 
         totalSupply += amount;
         balanceOf[to] += amount;
 
-        emit Minted(to, amount);
+        emit Mint(to, amount);
         emit Transfer(address(0), to, amount);
     }
 
-    /// @notice Reward user with tokens for granting consent
-    /// @param to User receiving reward
-    /// @param amount Amount to reward
-    function rewardConsent(address to, uint256 amount) external onlyOwner {
-        if (to == address(0)) revert InvalidAddress();
-        if (amount == 0) revert InvalidAmount();
-
-        totalSupply += amount;
-        balanceOf[to] += amount;
-
-        emit Minted(to, amount);
-        emit Transfer(address(0), to, amount);
-    }
-
-    /// @notice Transfer ownership to a new address
-    /// @param newOwner New owner address
-    function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert InvalidAddress();
+    /// @notice Update token owner (e.g. during contract upgrades)
+    function updateOwner(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Owner required");
         owner = newOwner;
+        emit OwnerUpdated(newOwner);
     }
 }

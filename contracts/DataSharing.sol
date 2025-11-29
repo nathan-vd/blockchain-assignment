@@ -7,426 +7,236 @@ import "./AuditLog.sol";
 import "./AccessToken.sol";
 
 /// @title DataSharing
-/// @notice Manages: Permission validation, Data access coordination
+/// @notice Coordinates identity registration, consent lifecycle, and audit logging
 contract DataSharing {
+    struct AccessRequest {
+        address requester;
+        address user;
+        ConsentManager.DataType[] attributes;
+        uint256 createdAt;
+        bool active;
+    }
+
     IdentityManager public identityManager;
     ConsentManager public consentManager;
     AuditLog public auditLog;
     AccessToken public accessToken;
 
-    // Token reward per consent grant (18 decimals)
-    uint256 public constant CONSENT_REWARD = 10 * 10**18; // 10 tokens
+    address public owner;
+    uint256 public nextRequestId;
+    uint256 public constant CONSENT_REWARD = 10 * 10**18;
 
-    // Pending access requests
-    struct AccessRequest {
-        address requester;
-        address user;
-        ConsentManager.DataType[] attributes;
-        uint256 timestamp;
-        bool active;
-    }
-
-    // Request ID counter
-    uint256 public requestCounter;
-    
-    // Mapping from request ID to access request
-    mapping(uint256 => AccessRequest) public accessRequests;
-    
-    // Mapping from user => requester => request IDs
-    mapping(address => mapping(address => uint256[])) public userRequesterRequests;
-    
-    // Mapping from user => pending request IDs
-    mapping(address => uint256[]) public userPendingRequests;
+    mapping(uint256 => AccessRequest) private accessRequests;
 
     event AccessRequested(
         uint256 indexed requestId,
         address indexed requester,
         address indexed user,
-        ConsentManager.DataType[] attributes
+        uint8[] attributes
     );
-    
-    event AccessRequestFulfilled(
+    event ConsentIssued(
         uint256 indexed requestId,
-        uint256 indexed consentId
+        uint256 indexed consentId,
+        address indexed user,
+        address requester
     );
-    
-    event AccessRequestCancelled(uint256 indexed requestId);
-    
-    event DataAccessAttempted(
+    event ConsentRevoked(uint256 indexed consentId, address indexed user, address indexed requester);
+    event AccessAttempt(
+        uint256 indexed consentId,
         address indexed requester,
         address indexed user,
-        uint256 indexed consentId,
         ConsentManager.DataType attribute,
         bool success
     );
 
-    error NotRegistered();
-    error InvalidRequest();
-    error ConsentNotValid();
-    error Unauthorized();
-    error RequestNotActive();
-    error AttributeNotAuthorized();
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not platform owner");
+        _;
+    }
 
     constructor() {
-        // Deploy all contracts
-        identityManager = new IdentityManager();
-        accessToken = new AccessToken();
-        consentManager = new ConsentManager(address(identityManager));
-        auditLog = new AuditLog();
+        owner = msg.sender;
+        identityManager = new IdentityManager(address(this));
+        consentManager = new ConsentManager(address(identityManager), address(this));
+        auditLog = new AuditLog(address(this));
+        accessToken = new AccessToken(address(this));
     }
 
-    /// @notice Register as a new user
-    /// @param hashedUUID Hash of user's unique identifier
+    /// @notice Register a new identity on-chain
     function registerUser(bytes32 hashedUUID) external {
-        identityManager.registerUser(msg.sender, hashedUUID);
+        identityManager.register(msg.sender, hashedUUID);
+        auditLog.logUserRegistered(msg.sender, hashedUUID);
     }
 
-    /// @notice Request access to a user's data
-    /// @param user User whose data is being requested
-    /// @param attributes Array of attributes being requested
-    /// @return requestId The ID of the access request
-    function requestAccess(
-        address user,
-        ConsentManager.DataType[] calldata attributes
-    ) external returns (uint256) {
-        // Verify both parties are registered
-        if (!identityManager.isRegistered(msg.sender)) revert NotRegistered();
-        if (!identityManager.isRegistered(user)) revert NotRegistered();
-        if (attributes.length == 0) revert InvalidRequest();
-
-        uint256 requestId = requestCounter++;
-
-        accessRequests[requestId] = AccessRequest({
-            requester: msg.sender,
-            user: user,
-            attributes: attributes,
-            timestamp: block.timestamp,
-            active: true
-        });
-
-        userRequesterRequests[user][msg.sender].push(requestId);
-        userPendingRequests[user].push(requestId);
-
-        emit AccessRequested(requestId, msg.sender, user, attributes);
-
-        return requestId;
+    /// @notice Authorize or revoke a trusted data submitter
+    function setDataSubmitter(address submitter, bool authorized) external onlyOwner {
+        identityManager.setDataSubmitter(submitter, authorized);
     }
 
-    /// @notice Grant consent in response to an access request
-    /// @param requestId The access request ID
-    /// @param durationDays Duration of consent in days
-    /// @return consentId The ID of the granted consent
-    function grantConsentForRequest(
-        uint256 requestId,
-        uint256 durationDays
-    ) external returns (uint256) {
-        AccessRequest storage request = accessRequests[requestId];
-        
-        if (!request.active) revert RequestNotActive();
-        if (request.user != msg.sender) revert Unauthorized();
-
-        // Grant consent via ConsentManager
-        uint256 consentId = consentManager.grantConsent(
-            request.requester,
-            request.attributes,
-            durationDays
-        );
-
-        // Mark request as fulfilled
-        request.active = false;
-
-        // Reward user with tokens
-        accessToken.rewardConsent(msg.sender, CONSENT_REWARD);
-        
-        // Log consent grant
-        uint8[] memory attrArray = new uint8[](request.attributes.length);
-        for (uint256 i = 0; i < request.attributes.length; i++) {
-            attrArray[i] = uint8(request.attributes[i]);
-        }
-        auditLog.logConsent(consentId, msg.sender, request.requester, attrArray, "GRANTED");
-
-        emit AccessRequestFulfilled(requestId, consentId);
-
-        return consentId;
-    }
-
-    /// @notice Grant consent directly (without prior request)
-    /// @param requester Address to grant consent to
-    /// @param attributes Array of attributes to grant access to
-    /// @param durationDays Duration of consent in days
-    /// @return consentId The ID of the granted consent
-    function grantConsent(
-        address requester,
-        ConsentManager.DataType[] calldata attributes,
-        uint256 durationDays
-    ) external returns (uint256) {
-        if (!identityManager.isRegistered(msg.sender)) revert NotRegistered();
-        if (!identityManager.isRegistered(requester)) revert NotRegistered();
-
-        // Grant consent via ConsentManager
-        uint256 consentId = consentManager.grantConsent(
-            requester,
-            attributes,
-            durationDays
-        );
-
-        // Reward user with tokens
-        accessToken.rewardConsent(msg.sender, CONSENT_REWARD);
-        
-        // Log consent grant
-        uint8[] memory attrArray = new uint8[](attributes.length);
-        for (uint256 i = 0; i < attributes.length; i++) {
-            attrArray[i] = uint8(attributes[i]);
-        }
-        auditLog.logConsent(consentId, msg.sender, requester, attrArray, "GRANTED");
-
-        return consentId;
-    }
-
-    /// @notice Revoke a consent
-    /// @param consentId The consent ID to revoke
-    function revokeConsent(uint256 consentId) external {
-        ConsentManager.Consent memory consent = consentManager.getConsent(consentId);
-        
-        consentManager.revokeConsent(consentId);
-        
-        // Log consent revocation
-        uint8[] memory attrArray = new uint8[](consent.attributes.length);
-        for (uint256 i = 0; i < consent.attributes.length; i++) {
-            attrArray[i] = uint8(consent.attributes[i]);
-        }
-        auditLog.logConsent(consentId, consent.owner, consent.requester, attrArray, "REVOKED");
-    }
-
-    /// @notice Verify if a specific attribute is authorized for access
-    /// @param user User address
-    /// @param requester Requester address
-    /// @param attribute Attribute to verify
-    /// @return authorized True if attribute access is authorized
-    function verifyAttribute(
-        address user,
-        address requester,
-        ConsentManager.DataType attribute
-    ) public view returns (bool) {
-        return consentManager.hasValidConsent(user, requester, attribute);
-    }
-
-    /// @notice Check if access permission exists for given parameters
-    /// @param user User address
-    /// @param requester Requester address
-    /// @param consentId Consent ID
-    /// @param attribute Attribute to check
-    /// @return hasPermission True if permission exists
-    function checkAccessPermission(
-        address user,
-        address requester,
-        uint256 consentId,
-        ConsentManager.DataType attribute
-    ) public view returns (bool) {
-        ConsentManager.Consent memory consent = consentManager.getConsent(consentId);
-        
-        // Verify basic consent validity
-        if (consent.owner != user) return false;
-        if (consent.requester != requester) return false;
-        if (!consentManager.isConsentValid(consentId)) return false;
-        if (!consentManager.isConsentValidForAttribute(consentId, attribute)) return false;
-        
-        return true;
-    }
-
-    /// @notice Access user data with valid consent
-    /// @param user User whose data is being accessed
-    /// @param consentId Consent ID to use for access
-    /// @param attribute Specific attribute being accessed
-    /// @return success True if access was granted
-    function accessData(
-        address user,
-        uint256 consentId,
-        ConsentManager.DataType attribute
-    ) external returns (bool) {
-        ConsentManager.Consent memory consent = consentManager.getConsent(consentId);
-        
-        // Verify requester matches consent
-        if (consent.requester != msg.sender) {
-            auditLog.logAccess(
-                consentId,
-                msg.sender,
-                user,
-                uint8(attribute),
-                AuditLog.AccessResult.Denied,
-                "Requester mismatch"
-            );
-            
-            emit DataAccessAttempted(msg.sender, user, consentId, attribute, false);
-            return false;
-        }
-
-        // Verify consent is valid
-        if (!consentManager.isConsentValid(consentId)) {
-            AuditLog.AccessResult result;
-            string memory reason;
-            
-            if (consent.status == ConsentManager.Status.Revoked) {
-                result = AuditLog.AccessResult.Revoked;
-                reason = "Consent revoked";
-            } else if (consent.status == ConsentManager.Status.Expired) {
-                result = AuditLog.AccessResult.Expired;
-                reason = "Consent expired";
-            } else {
-                result = AuditLog.AccessResult.InvalidConsent;
-                reason = "Invalid consent";
-            }
-            
-            auditLog.logAccess(
-                consentId,
-                msg.sender,
-                user,
-                uint8(attribute),
-                result,
-                reason
-            );
-            
-            emit DataAccessAttempted(msg.sender, user, consentId, attribute, false);
-            return false;
-        }
-
-        // Verify attribute is covered by consent
-        if (!consentManager.isConsentValidForAttribute(consentId, attribute)) {
-            auditLog.logAccess(
-                consentId,
-                msg.sender,
-                user,
-                uint8(attribute),
-                AuditLog.AccessResult.Denied,
-                "Attribute not in consent"
-            );
-            
-            emit DataAccessAttempted(msg.sender, user, consentId, attribute, false);
-            return false;
-        }
-
-        // Log successful access
-        auditLog.logAccess(
-            consentId,
-            msg.sender,
-            user,
-            uint8(attribute),
-            AuditLog.AccessResult.Success,
-            "Access granted"
-        );
-        
-        emit DataAccessAttempted(msg.sender, user, consentId, attribute, true);
-        
-        // In a real implementation, this would trigger off-chain data delivery
-        return true;
-    }
-
-    /// @notice Cancel an active access request
-    /// @param requestId The request ID to cancel
-    function cancelAccessRequest(uint256 requestId) external {
-        AccessRequest storage request = accessRequests[requestId];
-        
-        if (!request.active) revert RequestNotActive();
-        if (request.requester != msg.sender && request.user != msg.sender) {
-            revert Unauthorized();
-        }
-
-        request.active = false;
-        
-        emit AccessRequestCancelled(requestId);
-    }
-
-    /// @notice Get pending access requests for a user
-    /// @param user User address
-    /// @return requestIds Array of pending request IDs
-    function getPendingRequests(address user) 
-        external 
-        view 
-        returns (uint256[] memory) 
-    {
-        uint256[] memory allRequests = userPendingRequests[user];
-        uint256 activeCount = 0;
-        
-        // Count active requests
-        for (uint256 i = 0; i < allRequests.length; i++) {
-            if (accessRequests[allRequests[i]].active) {
-                activeCount++;
-            }
-        }
-        
-        // Collect active requests
-        uint256[] memory activeRequests = new uint256[](activeCount);
-        uint256 currentIndex = 0;
-        
-        for (uint256 i = 0; i < allRequests.length; i++) {
-            if (accessRequests[allRequests[i]].active) {
-                activeRequests[currentIndex] = allRequests[i];
-                currentIndex++;
-            }
-        }
-        
-        return activeRequests;
-    }
-
-    /// @notice Get access request details
-    /// @param requestId Request ID
-    /// @return request The access request details
-    function getAccessRequest(uint256 requestId) 
-        external 
-        view 
-        returns (AccessRequest memory) 
-    {
-        return accessRequests[requestId];
-    }
-
-    /// @notice Get user's audit logs
-    /// @param user User address
-    /// @return logs Array of access events
-    function getUserAuditLogs(address user) 
-        external 
-        view 
-        returns (AuditLog.AccessEvent[] memory) 
-    {
-        return auditLog.getUserAccessLogs(user);
-    }
-
-    /// @notice Verify credit score and submit to blockchain (Data Submitter only)
-    /// @param user User whose credit is being verified
-    /// @param creditScore Credit score to submit
-    /// @param signature Signature attesting to verification
+    /// @notice Submit verified credit data (data submitter only)
     function submitCreditVerification(
         address user,
         uint256 creditScore,
         bytes calldata signature
     ) external {
-        identityManager.updateCreditData(user, creditScore, signature);
+        require(identityManager.authorizedSubmitters(msg.sender), "Not data submitter");
+        identityManager.updateCreditData(user, creditScore, signature, msg.sender);
+        auditLog.logCreditVerified(user, msg.sender, creditScore);
     }
 
-    /// @notice Authorize a data submitter (Admin only)
-    /// @param submitter Address to authorize
-    /// @param authorized True to authorize, false to revoke
-    function authorizeDataSubmitter(address submitter, bool authorized) external {
-        // Only identity contract admin can call this
-        identityManager.setDataSubmitterAuthorization(submitter, authorized);
+    /// @notice Create an access request for user attributes
+    function requestAccess(
+        address user,
+        ConsentManager.DataType[] calldata attributes
+    ) external returns (uint256) {
+        require(identityManager.isRegistered(msg.sender), "Requester not registered");
+        require(identityManager.isRegistered(user), "User not registered");
+        require(attributes.length > 0, "Attributes required");
+
+        uint256 requestId = nextRequestId++;
+        AccessRequest storage request = accessRequests[requestId];
+        request.requester = msg.sender;
+        request.user = user;
+        request.createdAt = block.timestamp;
+        request.active = true;
+
+        uint8[] memory attrCodes = new uint8[](attributes.length);
+        for (uint256 i = 0; i < attributes.length; i++) {
+            request.attributes.push(attributes[i]);
+            attrCodes[i] = uint8(attributes[i]);
+        }
+
+        emit AccessRequested(requestId, msg.sender, user, attrCodes);
+        return requestId;
     }
 
-    /// @notice Get identity contract address
-    function getidentityManager() external view returns (address) {
-        return address(identityManager);
+    /// @notice Grant consent for a pending access request
+    function grantConsent(uint256 requestId, uint256 durationDays) external returns (uint256) {
+        AccessRequest storage request = accessRequests[requestId];
+        require(request.active, "Request inactive");
+        require(request.user == msg.sender, "Not request owner");
+
+        ConsentManager.DataType[] memory attrs = _copyAttributes(request.attributes);
+        uint256 consentId = consentManager.grantConsentFor(msg.sender, request.requester, attrs, durationDays);
+        request.active = false;
+
+        uint8[] memory attrCodes = _toUint8Array(attrs);
+        auditLog.logConsent(consentId, msg.sender, request.requester, attrCodes, "GRANTED");
+
+        accessToken.mint(msg.sender, CONSENT_REWARD);
+        auditLog.logTokenReward(msg.sender, CONSENT_REWARD);
+
+        emit ConsentIssued(requestId, consentId, msg.sender, request.requester);
+        return consentId;
     }
 
-    /// @notice Get consent manager contract address
-    function getConsentManager() external view returns (address) {
-        return address(consentManager);
+    /// @notice Revoke an existing consent
+    function revokeConsent(uint256 consentId) external {
+        ConsentManager.Consent memory consent = consentManager.getConsent(consentId);
+        require(consent.owner == msg.sender, "Not consent owner");
+
+        consentManager.revokeConsent(consentId);
+
+        uint8[] memory attrCodes = _toUint8Array(consent.attributes);
+        auditLog.logConsent(consentId, consent.owner, consent.requester, attrCodes, "REVOKED");
+
+        emit ConsentRevoked(consentId, consent.owner, consent.requester);
     }
 
-    /// @notice Get audit log contract address
-    function getAuditLog() external view returns (address) {
-        return address(auditLog);
+    /// @notice Check if requester currently has permission to view an attribute
+    function hasConsent(
+        address user,
+        address requester,
+        ConsentManager.DataType attribute
+    ) external view returns (bool) {
+        return consentManager.hasValidConsent(user, requester, attribute);
     }
 
-    /// @notice Get access token contract address
-    function getAccessToken() external view returns (address) {
-        return address(accessToken);
+    /// @notice Validate consent and emit audit events around a data access attempt
+    function accessData(uint256 consentId, ConsentManager.DataType attribute) external returns (bool) {
+        ConsentManager.Consent memory consent = consentManager.getConsent(consentId);
+        if (consent.requester != msg.sender) {
+            _logAccess(consentId, consent.owner, attribute, false, "REQUESTER_MISMATCH");
+            return false;
+        }
+
+        if (!consentManager.isConsentValid(consentId)) {
+            _logAccess(consentId, consent.owner, attribute, false, "CONSENT_INACTIVE");
+            return false;
+        }
+
+        if (!consentManager.coversAttribute(consentId, attribute)) {
+            _logAccess(consentId, consent.owner, attribute, false, "ATTRIBUTE_NOT_ALLOWED");
+            return false;
+        }
+
+        _logAccess(consentId, consent.owner, attribute, true, "ACCESS_GRANTED");
+        return true;
+    }
+
+    /// @notice View minimal request information
+    function getRequest(uint256 requestId)
+        external
+        view
+        returns (
+            address requester,
+            address user,
+            ConsentManager.DataType[] memory attributes,
+            uint256 createdAt,
+            bool active
+        )
+    {
+        AccessRequest storage request = accessRequests[requestId];
+        return (
+            request.requester,
+            request.user,
+            _copyAttributes(request.attributes),
+            request.createdAt,
+            request.active
+        );
+    }
+
+    /// @notice Transfer platform ownership
+    function updateOwner(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Owner required");
+        owner = newOwner;
+    }
+
+    function _logAccess(
+        uint256 consentId,
+        address user,
+        ConsentManager.DataType attribute,
+        bool success,
+        string memory detail
+    ) internal {
+        auditLog.logAccess(
+            consentId,
+            msg.sender,
+            user,
+            uint8(attribute),
+            success,
+            detail
+        );
+        emit AccessAttempt(consentId, msg.sender, user, attribute, success);
+    }
+
+    function _copyAttributes(ConsentManager.DataType[] storage attrs)
+        internal
+        view
+        returns (ConsentManager.DataType[] memory)
+    {
+        ConsentManager.DataType[] memory copy = new ConsentManager.DataType[](attrs.length);
+        for (uint256 i = 0; i < attrs.length; i++) {
+            copy[i] = attrs[i];
+        }
+        return copy;
+    }
+
+    function _toUint8Array(ConsentManager.DataType[] memory attrs) internal pure returns (uint8[] memory) {
+        uint8[] memory output = new uint8[](attrs.length);
+        for (uint256 i = 0; i < attrs.length; i++) {
+            output[i] = uint8(attrs[i]);
+        }
+        return output;
     }
 }

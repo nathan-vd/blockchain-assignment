@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/// @title ConsentManager
-/// @notice Stores: Consent agreements, Expiration times, Authorized attributes
-contract ConsentManager {
-    enum Status {
-        None,
-        Active,
-        Revoked,
-        Expired
-    }
+interface IIdentityRegistry {
+    function isRegistered(address user) external view returns (bool);
+}
 
-    // Data types that can be shared
+/// @title ConsentManager
+/// @notice Tracks consent agreements, authorized attributes, and expiration windows
+contract ConsentManager {
     enum DataType {
         UUID,
         Name,
@@ -22,219 +18,93 @@ contract ConsentManager {
     struct Consent {
         address owner;
         address requester;
-        DataType[] attributes;
-        uint256 issuedAt;
+        uint256 grantedAt;
         uint256 expiresAt;
-        Status status;
+        bool revoked;
+        DataType[] attributes;
     }
 
-    // Consent ID counter
-    uint256 public consentCounter;
-    
-    // Mapping from consent ID to consent details
-    mapping(uint256 => Consent) public consents;
-    
-    // Mapping from user => requester => consent IDs
-    mapping(address => mapping(address => uint256[])) public userRequesterConsents;
-    
-    // Mapping from user => all consent IDs granted by user
-    mapping(address => uint256[]) public userConsents;
-    
-    // Mapping from requester => all consent IDs granted to requester
-    mapping(address => uint256[]) public requesterConsents;
+    uint256 public nextConsentId;
 
-    // Reference to IdentityManager contract
-    address public identityContract;
-    
-    // Trusted caller (DataSharing contract)
-    address public trustedCaller;
+    mapping(uint256 => Consent) private consents;
+    mapping(address => mapping(address => uint256[])) private consentsForPair;
+
+    address public admin;
+    IIdentityRegistry public identityRegistry;
 
     event ConsentGranted(
         uint256 indexed consentId,
         address indexed owner,
         address indexed requester,
-        DataType[] attributes,
         uint256 expiresAt
     );
-    
-    event ConsentRevoked(
-        uint256 indexed consentId,
-        address indexed owner,
-        address indexed requester
-    );
-    
-    event ConsentExpired(
-        uint256 indexed consentId,
-        address indexed owner,
-        address indexed requester
-    );
-    
-    event AccessRequested(
-        address indexed requester,
-        address indexed user,
-        DataType[] attributes,
-        uint256 timestamp
-    );
+    event ConsentRevoked(uint256 indexed consentId, address indexed owner, address indexed requester);
 
-    error InvalidDuration();
-    error NotOwner();
-    error ConsentNotActive();
-    error ConsentNotFound();
-    error InvalidAttributes();
-    error UserNotRegistered();
-    error RequesterNotRegistered();
-
-    modifier onlyConsentOwner(uint256 consentId) {
-        if (consents[consentId].owner != msg.sender) revert NotOwner();
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Not consent admin");
         _;
     }
 
-    constructor(address _identityContract) {
-        identityContract = _identityContract;
-        trustedCaller = msg.sender; // DataSharing contract
+    constructor(address identityAddress, address adminAddress) {
+        require(identityAddress != address(0), "Identity required");
+        require(adminAddress != address(0), "Admin required");
+        identityRegistry = IIdentityRegistry(identityAddress);
+        admin = adminAddress;
     }
 
-    /// @notice Request access to user data
-    /// @param user User whose data is being requested
-    /// @param attributes Array of data types being requested
-    function requestAccess(
-        address user,
-        DataType[] calldata attributes
-    ) external {
-        // Validate attributes
-        if (attributes.length == 0) revert InvalidAttributes();
-        
-        // Check both parties are registered
-        (bool success, bytes memory data) = identityContract.staticcall(
-            abi.encodeWithSignature("isRegistered(address)", msg.sender)
-        );
-        if (!success || !abi.decode(data, (bool))) revert RequesterNotRegistered();
-        
-        (success, data) = identityContract.staticcall(
-            abi.encodeWithSignature("isRegistered(address)", user)
-        );
-        if (!success || !abi.decode(data, (bool))) revert UserNotRegistered();
-
-        emit AccessRequested(msg.sender, user, attributes, block.timestamp);
-    }
-
-    /// @notice Grant consent to a requester for specific attributes
-    /// @param requester Address requesting access
-    /// @param attributes Array of data types being granted access to
-    /// @param durationDays Duration in days (1-365)
-    /// @return consentId The ID of the created consent
+    /// @notice Grant consent directly as the data owner
     function grantConsent(
         address requester,
         DataType[] calldata attributes,
         uint256 durationDays
     ) external returns (uint256) {
-        // Validate duration (1-365 days)
-        if (durationDays < 1 || durationDays > 365) revert InvalidDuration();
-        
-        // Validate attributes
-        if (attributes.length == 0) revert InvalidAttributes();
-        
-        // Determine the actual owner (if called by trusted caller, use tx.origin pattern)
-        address owner = msg.sender;
-        if (msg.sender == trustedCaller) {
-            owner = tx.origin;
-        }
-        
-        // Check both parties are registered
-        (bool success, bytes memory data) = identityContract.staticcall(
-            abi.encodeWithSignature("isRegistered(address)", owner)
-        );
-        if (!success || !abi.decode(data, (bool))) revert UserNotRegistered();
-        
-        (success, data) = identityContract.staticcall(
-            abi.encodeWithSignature("isRegistered(address)", requester)
-        );
-        if (!success || !abi.decode(data, (bool))) revert RequesterNotRegistered();
-
-        // Create new consent
-        uint256 consentId = consentCounter++;
-        uint256 expiresAt = block.timestamp + (durationDays * 1 days);
-
-        consents[consentId] = Consent({
-            owner: owner,
-            requester: requester,
-            attributes: attributes,
-            issuedAt: block.timestamp,
-            expiresAt: expiresAt,
-            status: Status.Active
-        });
-
-        // Track consent relationships
-        userRequesterConsents[owner][requester].push(consentId);
-        userConsents[owner].push(consentId);
-        requesterConsents[requester].push(consentId);
-
-        emit ConsentGranted(consentId, owner, requester, attributes, expiresAt);
-
-        return consentId;
+        return _createConsent(msg.sender, requester, attributes, durationDays);
     }
 
-    /// @notice Revoke a previously granted consent
-    /// @param consentId ID of the consent to revoke
-    function revokeConsent(uint256 consentId) external onlyConsentOwner(consentId) {
-        Consent storage consent = consents[consentId];
-        
-        if (consent.status != Status.Active) revert ConsentNotActive();
+    /// @notice Grant consent on behalf of a user (platform-controlled)
+    function grantConsentFor(
+        address owner,
+        address requester,
+        DataType[] calldata attributes,
+        uint256 durationDays
+    ) external onlyAdmin returns (uint256) {
+        return _createConsent(owner, requester, attributes, durationDays);
+    }
 
-        consent.status = Status.Revoked;
+    /// @notice Revoke an active consent (owner or platform)
+    function revokeConsent(uint256 consentId) external {
+        Consent storage consent = consents[consentId];
+        require(consent.owner != address(0), "Consent missing");
+        require(!consent.revoked, "Already revoked");
+        require(msg.sender == consent.owner || msg.sender == admin, "Not authorized");
+
+        consent.revoked = true;
 
         emit ConsentRevoked(consentId, consent.owner, consent.requester);
     }
 
-    /// @notice Check if a consent is currently valid (has valid consent)
-    /// @param owner Data owner address
-    /// @param requester Requester address
-    /// @param attribute Specific attribute to check
-    /// @return valid True if there is an active consent for this attribute
-    function hasValidConsent(
-        address owner,
-        address requester,
-        DataType attribute
-    ) public view returns (bool) {
-        uint256[] memory consentIds = userRequesterConsents[owner][requester];
-        
-        for (uint256 i = consentIds.length; i > 0; i--) {
-            uint256 consentId = consentIds[i - 1];
-            if (isConsentValidForAttribute(consentId, attribute)) {
-                return true;
-            }
-        }
-        
-        return false;
-    }
-
-    /// @notice Check if a consent is currently valid
-    /// @param consentId ID of the consent to check
-    /// @return valid True if consent is active and not expired
+    /// @notice Check if a consent is active and unexpired
     function isConsentValid(uint256 consentId) public view returns (bool) {
         Consent storage consent = consents[consentId];
-        
-        if (consent.owner == address(0)) return false;
-        if (consent.status != Status.Active) return false;
-        if (block.timestamp > consent.expiresAt) return false;
-
+        if (consent.owner == address(0)) {
+            return false;
+        }
+        if (consent.revoked) {
+            return false;
+        }
+        if (block.timestamp > consent.expiresAt) {
+            return false;
+        }
         return true;
     }
 
-    /// @notice Check if consent is valid for a specific attribute
-    /// @param consentId ID of the consent to check
-    /// @param attribute Specific attribute to check access for
-    /// @return valid True if consent covers this attribute and is valid
-    function isConsentValidForAttribute(uint256 consentId, DataType attribute) 
-        public 
-        view 
-        returns (bool) 
-    {
-        if (!isConsentValid(consentId)) return false;
+    /// @notice Check if a consent covers a specific attribute
+    function coversAttribute(uint256 consentId, DataType attribute) public view returns (bool) {
+        if (!isConsentValid(consentId)) {
+            return false;
+        }
 
         Consent storage consent = consents[consentId];
-        
-        // Check if attribute is in the consent's attribute list
         for (uint256 i = 0; i < consent.attributes.length; i++) {
             if (consent.attributes[i] == attribute) {
                 return true;
@@ -244,71 +114,50 @@ contract ConsentManager {
         return false;
     }
 
-    /// @notice Mark a consent as expired (can be called by anyone)
-    /// @param consentId ID of the consent to mark as expired
-    function markExpired(uint256 consentId) external {
-        Consent storage consent = consents[consentId];
-        
-        if (consent.owner == address(0)) revert ConsentNotFound();
-        if (consent.status != Status.Active) revert ConsentNotActive();
-        if (block.timestamp <= consent.expiresAt) revert ConsentNotActive();
-
-        consent.status = Status.Expired;
-
-        emit ConsentExpired(consentId, consent.owner, consent.requester);
+    /// @notice Determine if requester currently has access to a specific attribute
+    function hasValidConsent(address owner, address requester, DataType attribute) external view returns (bool) {
+        uint256[] memory ids = consentsForPair[owner][requester];
+        for (uint256 i = ids.length; i > 0; i--) {
+            uint256 consentId = ids[i - 1];
+            if (coversAttribute(consentId, attribute)) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    /// @notice Get consent details
-    /// @param consentId ID of the consent
-    /// @return consent The consent struct
+    /// @notice Fetch consent details
     function getConsent(uint256 consentId) external view returns (Consent memory) {
         return consents[consentId];
     }
 
-    /// @notice Get all consent IDs between a user and requester
-    /// @param user User address
-    /// @param requester Requester address
-    /// @return consentIds Array of consent IDs
-    function getConsentsForUserAndRequester(address user, address requester) 
-        external 
-        view 
-        returns (uint256[] memory) 
-    {
-        return userRequesterConsents[user][requester];
-    }
+    function _createConsent(
+        address owner,
+        address requester,
+        DataType[] calldata attributes,
+        uint256 durationDays
+    ) internal returns (uint256) {
+        require(owner != address(0) && requester != address(0), "Invalid parties");
+        require(identityRegistry.isRegistered(owner), "Owner not registered");
+        require(identityRegistry.isRegistered(requester), "Requester not registered");
+        require(attributes.length > 0, "Attributes required");
+        require(durationDays >= 1 && durationDays <= 365, "Invalid duration");
 
-    /// @notice Get all consent IDs granted by a user
-    /// @param user User address
-    /// @return consentIds Array of consent IDs
-    function getUserConsents(address user) external view returns (uint256[] memory) {
-        return userConsents[user];
-    }
+        uint256 consentId = nextConsentId++;
+        Consent storage consent = consents[consentId];
+        consent.owner = owner;
+        consent.requester = requester;
+        consent.grantedAt = block.timestamp;
+        consent.expiresAt = block.timestamp + (durationDays * 1 days);
+        consent.revoked = false;
 
-    /// @notice Get all consent IDs granted to a requester
-    /// @param requester Requester address
-    /// @return consentIds Array of consent IDs
-    function getRequesterConsents(address requester) external view returns (uint256[] memory) {
-        return requesterConsents[requester];
-    }
-
-    /// @notice Get active consent ID for a user-requester pair
-    /// @param user User address
-    /// @param requester Requester address
-    /// @return consentId The active consent ID (0 if none active)
-    function getActiveConsent(address user, address requester) 
-        external 
-        view 
-        returns (uint256) 
-    {
-        uint256[] memory consentIds = userRequesterConsents[user][requester];
-        
-        for (uint256 i = consentIds.length; i > 0; i--) {
-            uint256 consentId = consentIds[i - 1];
-            if (isConsentValid(consentId)) {
-                return consentId;
-            }
+        for (uint256 i = 0; i < attributes.length; i++) {
+            consent.attributes.push(attributes[i]);
         }
-        
-        return 0;
+
+        consentsForPair[owner][requester].push(consentId);
+
+        emit ConsentGranted(consentId, owner, requester, consent.expiresAt);
+        return consentId;
     }
 }
