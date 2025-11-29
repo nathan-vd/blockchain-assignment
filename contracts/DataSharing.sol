@@ -32,7 +32,7 @@ contract DataSharing {
         uint256 indexed requestId,
         address indexed requester,
         address indexed user,
-        uint8[] attributes
+        ConsentManager.DataType[] attributes
     );
     event ConsentIssued(
         uint256 indexed requestId,
@@ -100,13 +100,11 @@ contract DataSharing {
         request.createdAt = block.timestamp;
         request.active = true;
 
-        uint8[] memory attrCodes = new uint8[](attributes.length);
         for (uint256 i = 0; i < attributes.length; i++) {
             request.attributes.push(attributes[i]);
-            attrCodes[i] = uint8(attributes[i]);
         }
 
-        emit AccessRequested(requestId, msg.sender, user, attrCodes);
+        emit AccessRequested(requestId, msg.sender, user, attributes);
         return requestId;
     }
 
@@ -120,8 +118,7 @@ contract DataSharing {
         uint256 consentId = consentManager.grantConsentFor(msg.sender, request.requester, attrs, durationDays);
         request.active = false;
 
-        uint8[] memory attrCodes = _toUint8Array(attrs);
-        auditLog.logConsent(consentId, msg.sender, request.requester, attrCodes, "GRANTED");
+        auditLog.logConsent(consentId, msg.sender, request.requester, attrs, "GRANTED");
 
         accessToken.mint(msg.sender, CONSENT_REWARD);
         auditLog.logTokenReward(msg.sender, CONSENT_REWARD);
@@ -137,8 +134,7 @@ contract DataSharing {
 
         consentManager.revokeConsent(consentId);
 
-        uint8[] memory attrCodes = _toUint8Array(consent.attributes);
-        auditLog.logConsent(consentId, consent.owner, consent.requester, attrCodes, "REVOKED");
+        auditLog.logConsent(consentId, consent.owner, consent.requester, consent.attributes, "REVOKED");
 
         emit ConsentRevoked(consentId, consent.owner, consent.requester);
     }
@@ -213,7 +209,7 @@ contract DataSharing {
             consentId,
             msg.sender,
             user,
-            uint8(attribute),
+            attribute,
             success,
             detail
         );
@@ -230,13 +226,5 @@ contract DataSharing {
             copy[i] = attrs[i];
         }
         return copy;
-    }
-
-    function _toUint8Array(ConsentManager.DataType[] memory attrs) internal pure returns (uint8[] memory) {
-        uint8[] memory output = new uint8[](attrs.length);
-        for (uint256 i = 0; i < attrs.length; i++) {
-            output[i] = uint8(attrs[i]);
-        }
-        return output;
     }
 }

@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {AuditLog} from "./AuditLog.sol";
+import {ConsentManager} from "./ConsentManager.sol";
 
 contract AuditLogTest is Test {
     AuditLog private auditLog;
@@ -16,7 +17,7 @@ contract AuditLogTest is Test {
         uint256 indexed consentId,
         address indexed owner,
         address indexed requester,
-        uint8[] attributes,
+        ConsentManager.DataType[] attributes,
         string action,
         uint256 timestamp
     );
@@ -24,7 +25,7 @@ contract AuditLogTest is Test {
         uint256 indexed consentId,
         address indexed requester,
         address indexed owner,
-        uint8 attribute,
+        ConsentManager.DataType attribute,
         bool success,
         string detail,
         uint256 timestamp
@@ -55,9 +56,9 @@ contract AuditLogTest is Test {
     }
 
     function testLogConsentEvent() public {
-        uint8[] memory attrs = new uint8[](2);
-        attrs[0] = 1;
-        attrs[1] = 3;
+        ConsentManager.DataType[] memory attrs = new ConsentManager.DataType[](2);
+        attrs[0] = ConsentManager.DataType.Name;
+        attrs[1] = ConsentManager.DataType.CreditScore;
 
         vm.expectEmit(true, true, true, true);
         emit ConsentEvent(1, user, requester, attrs, "GRANTED", block.timestamp);
@@ -66,8 +67,8 @@ contract AuditLogTest is Test {
 
     function testLogAccessEvent() public {
         vm.expectEmit(true, true, true, true);
-        emit AccessEvent(2, requester, user, 0, true, "OK", block.timestamp);
-        auditLog.logAccess(2, requester, user, 0, true, "OK");
+        emit AccessEvent(2, requester, user, ConsentManager.DataType.UUID, true, "OK", block.timestamp);
+        auditLog.logAccess(2, requester, user, ConsentManager.DataType.UUID, true, "OK");
     }
 
     function testLogTokenRewardEmitsEvent() public {

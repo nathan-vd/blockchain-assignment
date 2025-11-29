@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
+import "./ConsentManager.sol";
+
 /// @title AuditLog
 /// @notice Emits immutable events for every critical platform action
 contract AuditLog {
@@ -12,7 +14,7 @@ contract AuditLog {
         uint256 indexed consentId,
         address indexed owner,
         address indexed requester,
-        uint8[] attributes,
+        ConsentManager.DataType[] attributes,
         string action,
         uint256 timestamp
     );
@@ -20,7 +22,7 @@ contract AuditLog {
         uint256 indexed consentId,
         address indexed requester,
         address indexed owner,
-        uint8 attribute,
+        ConsentManager.DataType attribute,
         bool success,
         string detail,
         uint256 timestamp
@@ -49,7 +51,7 @@ contract AuditLog {
         uint256 consentId,
         address owner,
         address requester,
-        uint8[] calldata attributes,
+        ConsentManager.DataType[] calldata attributes,
         string calldata action
     ) external onlyPlatform {
         emit ConsentEvent(consentId, owner, requester, attributes, action, block.timestamp);
@@ -59,7 +61,7 @@ contract AuditLog {
         uint256 consentId,
         address requester,
         address owner,
-        uint8 attribute,
+        ConsentManager.DataType attribute,
         bool success,
         string calldata detail
     ) external onlyPlatform {
