@@ -2,18 +2,17 @@ import { network } from "hardhat";
 
 async function main() {
   const { viem } = await network.connect();
+  const [deployer] = await viem.getWalletClients();
 
-  const identity = await viem.deployContract("DigitalIdentity");
-  console.log("DigitalIdentity:", identity.address);
+  const dataSharing = await viem.deployContract("DataSharing", [], {
+    client: { wallet: deployer },
+  });
 
-  const consent = await viem.deployContract("ConsentManager", [identity.address]);
-  console.log("ConsentManager:", consent.address);
-
-  const registry = await viem.deployContract("DataAccessRegistry", [consent.address]);
-  console.log("DataAccessRegistry:", registry.address);
-
-  const token = await viem.deployContract("AccessToken");
-  console.log("AccessToken:", token.address);
+  console.log("DataSharing:", dataSharing.address);
+  console.log("IdentityManager:", await dataSharing.read.identityManager());
+  console.log("ConsentManager:", await dataSharing.read.consentManager());
+  console.log("AuditLog:", await dataSharing.read.auditLog());
+  console.log("AccessToken:", await dataSharing.read.accessToken());
 }
 
 main().catch((error) => {
