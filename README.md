@@ -1,37 +1,30 @@
-# Decentralized Digital Identity & Data Sharing (Skeleton)
+# Blockchain Assignment
 
-This repository bootstraps the project described in `../prompt.txt`: a finance-focused decentralized identity and data sharing platform where users control consent, every access attempt is logged, and incentives are provided via access tokens.
+## Overview
 
-## Repository Layout
-- `contracts/`
-  - `DigitalIdentity.sol`, `ConsentManager.sol`, `DataAccessRegistry.sol`, `AccessToken.sol` – **abstract** placeholders exposing only function signatures so you can implement the business logic yourself
-- `scripts/deploy.ts` – placeholder Hardhat deployment script (will only work once the contracts have implementations)
-- `docs/requirements.md` – distilled research, roles, and functional requirements
-- `docs/design.md` – data model table, consent workflow, and component-level architecture sketch
-- `hardhat.config.ts` – Hardhat + Viem toolbox configuration (Solidity 0.8.30)
-- `tsconfig.json` – TypeScript settings for scripts/tests
+This project implements a finance-focused data sharing platform where:
+- Users register hashed identities and can grant/revoke consent for specific data attributes.
+- Requesters submit access requests and must hold valid consent before reading data.
+- A submitter role updates verified credit scores.
+- All interactions emit audit logs and reward consent grants with tokens.
 
-## Getting Started
-1. Install dependencies
-   ```bash
-   npm install
-   ```
-2. Compile contracts
-   ```bash
-   npx hardhat compile
-   ```
-3. Implement the contract logic you need (current Solidity files contain only function titles)
-4. Start a local node and deploy (after implementations are ready)
-   ```bash
-   npx hardhat node
-   # new terminal
-   npx hardhat run scripts/deploy.ts --network localhost
-   ```
+## Running the demo
 
-## Next Steps
-- Flesh out ConsentManager and DataAccessRegistry with full business logic (token rewards, admin controls, verifier attestations)
-- Add tests (none are included yet) to cover consent lifecycle, audit logging, and integration workflows
-- Capture gas metrics and document them per assignment requirements
-- (Optional) Scaffold a frontend that connects via Viem to manage identities, consent, and audit logs
+```bash
+cd blockchain-assignment
+npm install
+npx hardhat node          # start in a separate terminal
+npx hardhat compile
+npx hardhat run scripts/five-user-demo.ts --network localhost
+```
 
-Refer to the `docs/` folder for the planning artifacts that map directly to the assignment brief.
+The demo deploys the `DataSharing` stack and executes the full consent lifecycle for five user/requester pairs, printing gas usage and timing for each transaction.
+
+## Running the tests
+
+```bash
+cd blockchain-assignment
+npx hardhat test --gas-stats
+```
+
+This command compiles the contracts and runs all Solidity-based unit tests (IdentityManager, ConsentManager, AccessToken, AuditLog, and DataSharing). The `--gas-stats` flag prints gas usage per function.
