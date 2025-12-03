@@ -2,7 +2,8 @@
 
 ## Overview
 
-This project implements a finance-focused data sharing platform where:
+This project implements a finance-focused credit data sharing platform where:
+
 - Users register hashed identities and can grant/revoke consent for specific data attributes.
 - Requesters submit access requests and must hold valid consent before reading data.
 - A submitter role updates verified credit scores.
